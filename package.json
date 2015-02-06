@@ -1,0 +1,8 @@
+{
+  "name": "iobook",
+  "version": "0.0.1",
+  "dependencies": {
+    "lodash": "^3.1.0",
+    "zmq": "^2.10.0"
+  }
+}
