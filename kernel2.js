@@ -15,10 +15,13 @@ var delim = '<IDS|MSG>';
 
 var pubsock = zmq.createSocket('pub')
 pubsock.bind(`tcp://${config.ip}:${config.iopub_port}`);
+pubsock.on('message', function(){
+    console.log('|| pubsock', arguments)
+})
+
 
 var heart = zmq.createSocket('rep')
 heart.bind(`tcp://${config.ip}:${config.hb_port}`);
-
 heart.on('message', function(data){
     console.log('|| thunk', arguments)
     heart.send(data)
@@ -26,9 +29,7 @@ heart.on('message', function(data){
 
 var shellconn = zmq.createSocket('xrep');
 shellconn.bind(`tcp://${config.ip}:${config.shell_port}`)
-
 shellconn.on('message', function(){
-    // console.log('~~', "HELLO DARNKENESS MY OLD FRIEND", _.toArray([1, 2, 3]))
     var args = _.toArray(arguments).map(x => x.toString()), idnet;
     
     while(args[0].toString() != delim) ident = args.shift();
@@ -40,6 +41,15 @@ shellconn.on('message', function(){
 
     // TODO: verify HMAC signature hmac(header, parent_header, metadata, content)
     
+
+    console.log('!! message', {
+        ident: ident,
+        signature: signature,
+        header: header,
+        parent_header: parent_header,
+        metadata: metadata,
+        content: content
+    })
 
     if(header.msg_type == 'kernel_info_request'){
         send(shellconn, ident, header, 'kernel_info_reply', {
@@ -90,14 +100,6 @@ shellconn.on('message', function(){
     }else{
         console.log('!! unknown message type', header.msg_type)
 
-        console.log('!! message', {
-            ident: ident,
-            signature: signature,
-            header: header,
-            parent_header: parent_header,
-            metadata: metadata,
-            content: content
-        })
         
     }
 })
@@ -105,6 +107,10 @@ shellconn.on('message', function(){
 shellconn.on('error', function(err){
     console.log('!!', 'error', err)
     console.error(err)
+})
+
+process.on('SIGINT', function() {
+  console.log('Got SIGINT? Nope, Chuck Snowclone!');
 })
 
 console.log('starting kernel')
