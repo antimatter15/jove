@@ -1,14 +1,49 @@
+// figure out how to properly handle sigints without killing state      
+
 var zmq  = require('zmq')
 var fs   = require('fs')
 var util = require('util')
 var vm   = require('vm')
 var _    = require('lodash')
+var to5  = require("6to5")
+var path = require('path')
 
 var config = JSON.parse(fs.readFileSync(process.argv[2]))
 
+module.filename = path.join(process.cwd(), '<kernel>')
+module.paths = require('module')._nodeModulePaths(process.cwd())
+
+function pyout(mime, text){
+    var data = {};
+    data[mime] = text;
+    send(pubsock, null, 'pyout', {
+        data: data, 
+        metadata: {}, 
+        execution_count: execution_counter
+    })
+}
+
 var sandbox = {
     module: module,
-    require: require
+    require: require,
+    console: {
+        log: function(str){ pyout('text/plain', str) },
+        error: function(str){
+            send(pubsock, null, 'pyerr', {
+                data: {
+                    'text/plain': str
+                }, 
+                metadata: {}, 
+                execution_count: execution_counter
+            })
+        },
+        image: function(buf){
+            pyout('image/png', buf.toString('base64'))
+        },
+        html: function(str){
+            pyout('text/html', str)
+        }
+    }
 }
 var context = vm.createContext(sandbox)
 var delim = '<IDS|MSG>';
@@ -27,6 +62,8 @@ heart.on('message', function(data){
     heart.send(data)
 })
 
+var last_header = {};
+
 var shellconn = zmq.createSocket('xrep');
 shellconn.bind(`tcp://${config.ip}:${config.shell_port}`)
 shellconn.on('message', function(){
@@ -39,8 +76,8 @@ shellconn.on('message', function(){
         metadata = JSON.parse(args[4]),
         content = JSON.parse(args[5]);
 
-    // TODO: verify HMAC signature hmac(header, parent_header, metadata, content)
-    
+    // TODO: verify HMAC signature hmac(parent_metadata, content)
+    last_header = header;
 
     console.log('!! message', {
         ident: ident,
@@ -52,7 +89,7 @@ shellconn.on('message', function(){
     })
 
     if(header.msg_type == 'kernel_info_request'){
-        send(shellconn, ident, header, 'kernel_info_reply', {
+        send(shellconn, ident, 'kernel_info_reply', {
             protocol_version: [4, 0],
             language_version: process.version.replace(/[^\d\.]/g, '').split('.').map(x => parseInt(x, 10)),
             language: 'node'
@@ -61,11 +98,16 @@ shellconn.on('message', function(){
         if(!content.silent) execution_counter++;
         // content.code
         // send_status('busy')
-        send(pubsock, null, header, 'status', { execution_state: 'busy'})
-        send(pubsock, null, header, 'pyin', { code: content.code })
+        send(pubsock, null, 'status', { execution_state: 'busy'})
+        send(pubsock, null, 'pyin', { code: content.code })
         var result, reply;
         try{
-            result = vm.runInContext(content.code, context, '<kernel>')
+            var code = to5.transform(content.code, {
+                blacklist: ['regenerator'],
+                whitelist: ['asyncToGenerator', 'es6.blockScoping']
+            }).code;
+            // pyout('text/plain', code)
+            result = vm.runInContext(code, context, '<kernel>')
             reply = {
                 status: 'ok',
                 payload: [],
@@ -82,11 +124,11 @@ shellconn.on('message', function(){
                 traceback: e.stack.split('\n'),
                 execution_count: execution_counter
             }
-            send(pubsock, null, header, 'pyerr', reply)
+            send(pubsock, null, 'pyerr', reply)
         }
-        send(shellconn, ident, header, 'execute_reply', reply)
-        if(!content.silent){
-            send(pubsock, null, header, 'pyout', {
+        send(shellconn, ident, 'execute_reply', reply)
+        if(!content.silent && result !== undefined){
+            send(pubsock, null, 'pyout', {
                 data: {
                     'text/plain': util.inspect(result, {colors: true}) //util.inspect(result)
                 }, 
@@ -94,9 +136,9 @@ shellconn.on('message', function(){
                 execution_count: execution_counter
             })
         }
-        send(pubsock, null, header, 'status', { execution_state: 'idle'})
+        send(pubsock, null, 'status', { execution_state: 'idle'})
     }else if(header.msg_type == 'shutdown_request'){
-        send(shellconn, ident, header, 'shutdown_reply', content)
+        send(shellconn, ident, 'shutdown_reply', content)
     }else{
         console.log('!! unknown message type', header.msg_type)
 
@@ -113,18 +155,39 @@ process.on('SIGINT', function() {
   console.log('Got SIGINT? Nope, Chuck Snowclone!');
 })
 
+// process.stderr.write = (function(write){
+//     // return write('wumbo' + write)
+//     // write.apply(process.stderr, [args);
+//     return function(str){
+//         return write.apply(process.stderr, arguments);
+//     }
+// })(process.stderr.write);
+
+// process.stdout.write = (function(write){
+//     return function(str){
+//         send(pubsock, null, null, 'pyout', {
+//             data: {
+//                 'text/plain': str
+//             }, 
+//             metadata: {}, 
+//             execution_count: execution_counter
+//         })
+//         return write.apply(process.stdout, arguments);
+//     }
+// })(process.stdout.write);
+
 console.log('starting kernel')
 
-// send(pubsock, null, null, 'status', { execution_state: 'starting'})
+// send(pubsock, null, 'status', { execution_state: 'starting'})
 
 function send_status(exec_state){
-    send(pubsock, null, header, 'status', { execution_state: exec_state})
+    send(pubsock, null, 'status', { execution_state: exec_state})
 }
 
 var msg_counter = 1;
 var execution_counter = 1;
-function send(socket, ident, last_header, type, content){
-    if(!last_header) last_header = {};
+function send(socket, ident, type, content){
+    // if(!last_header) last_header = {};
 
     var reply_header = {
         msg_id: msg_counter++,
@@ -134,7 +197,7 @@ function send(socket, ident, last_header, type, content){
     }
     var signature = '';
     var metadata = {};
-    // console.log('!! sending', reply_header, content)
+    // console.log('!! sending', reply_content)
     var message = [
         delim,
         signature,
