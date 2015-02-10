@@ -6,7 +6,7 @@ var path = require('path');
 var fs   = require('fs');
 
 var ipython = 'ipython';
-var profile_name = 'iove';
+var profile_name = 'jove';
 
 // this is a no-op if the profile already exists
 exec(`${ipython} profile create ${profile_name}`, function(err, status){	
