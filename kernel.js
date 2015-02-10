@@ -1,12 +1,13 @@
 // figure out how to properly handle sigints without killing state      
 
-var zmq  = require('zmq')
-var fs   = require('fs')
-var util = require('util')
-var vm   = require('vm')
-var _    = require('lodash')
-var to5  = require('6to5')
-var path = require('path')
+var zmq    = require('zmq')
+var fs     = require('fs')
+var util   = require('util')
+var vm     = require('vm')
+var _      = require('lodash')
+var to5    = require('6to5')
+var path   = require('path')
+var crypto = require('crypto')
 
 var config = JSON.parse(fs.readFileSync(process.argv[2]))
 
@@ -84,6 +85,11 @@ shellconn.on('message', function(){
 
     // TODO: verify HMAC signature hmac(parent_metadata, content)
     last_header = header;
+
+    console.log('got signature', signature)
+    // var hmac = crypto.createHmac(config.signature_scheme.slice("hmac-".length), config.key);
+    // hmac.update(args[2]); hmac.update(args[3]); hmac.update(args[4]); hmac.update(args[5]);
+    // console.log('signature verification', hmac.digest('hex') == signature)
 
     console.log('!! message', {
         ident: ident,
@@ -193,25 +199,32 @@ function send_status(exec_state){
 var msg_counter = 1;
 var execution_counter = 1;
 function send(socket, ident, type, content){
-    // if(!last_header) last_header = {};
-
     var reply_header = {
         msg_id: msg_counter++,
         session: last_header.session,
         msg_type: type,
         username: last_header.username
     }
-    var signature = '';
+    
     var metadata = {};
-    // console.log('!! sending', reply_content)
-    var message = [
-        delim,
-        signature,
+
+    var stuff = [
         JSON.stringify(reply_header),
         JSON.stringify(last_header),
         JSON.stringify(metadata),
         JSON.stringify(content)
-    ]
+    ];
+
+    var hmac = crypto.createHmac(config.signature_scheme.slice("hmac-".length), config.key);
+    stuff.forEach(x => hmac.update(x));
+    var signature = hmac.digest("hex");
+
+    var message = [
+        delim,
+        signature
+    ].concat(stuff)
+
     if(ident) message.unshift(ident);
+
     socket.send(message)
 }
