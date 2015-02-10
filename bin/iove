@@ -1,0 +1,75 @@
+#!/usr/bin/env node --harmony_arrow_functions
+
+var exec = require('child_process').exec;
+var spawn = require("child_process").spawn;
+var path = require('path');
+var fs   = require('fs');
+
+var ipython = 'ipython';
+var profile_name = 'iove';
+
+// this is a no-op if the profile already exists
+exec(`${ipython} profile create ${profile_name}`, function(err, status){	
+	console.log(status)
+	if(err) throw "Error creating profile";
+	exec(`${ipython} locate profile ${profile_name}`, function(err, dir){
+		if(err) throw "Error locating profile";
+		install_config(dir)
+		run_ipython()
+	})	
+})
+
+function mkdirp(dir){
+	try {
+		fs.mkdirSync(dir)
+	} catch (e) {
+		if(e.code == 'ENOENT'){
+			mkdirp(path.dirname(dir))
+			mkdirp(dir)
+		}
+	}
+}
+
+function copy_file(src, dest){
+	mkdirp(path.dirname(dest))
+	fs.createReadStream(path.join(__dirname, '../static', src))
+		.pipe(fs.createWriteStream(dest));
+}
+
+function install_config(dir){
+	var file = path.join(dir.trim(), 'ipython_config.py')
+	var lines = fs.readFileSync(file, 'utf8').split('\n');
+	if(lines.some(line => /^c\.KernelManager\.kernel_cmd/.test(line))){
+		console.log('c.KernelManager.kernel_cmd is already defined. Not overriding existing value. ')
+	}else{
+		lines.push("c.KernelManager.kernel_cmd = " + JSON.stringify([
+			"/usr/bin/env", 
+			"node",
+			"--harmony_arrow_functions", 
+			"--harmony_templates", 
+			path.join(__dirname, '../kernel.js'),
+			"{connection_file}"
+		]))
+		fs.writeFileSync(file, lines.join('\n') + '\n', 'utf8')
+	}
+	
+	copy_file('custom.js', path.join(dir.trim(), 'static/custom/custom.js'))
+	copy_file('custom.css', path.join(dir.trim(), 'static/custom/custom.css'))
+	copy_file('ipynblogo.png', path.join(dir.trim(), 'static/base/images/ipynblogo.png'))
+	copy_file('favicon.ico', path.join(dir.trim(), 'static/base/images/favicon.ico'))
+	// console.log(config)
+}
+
+
+function run_ipython(){
+	// exec pynb
+	var ipy = spawn(ipython, ['notebook', '--profile=' + profile_name], {
+	    stdio: "inherit"
+	})
+
+	// forward SIGINT
+	var signal = "SIGINT";
+	process.on(signal, function() {
+	    ipy.emit(signal);
+	})
+}

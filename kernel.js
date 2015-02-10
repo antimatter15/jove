@@ -5,10 +5,12 @@ var fs   = require('fs')
 var util = require('util')
 var vm   = require('vm')
 var _    = require('lodash')
-var to5  = require("6to5")
+var to5  = require('6to5')
 var path = require('path')
 
 var config = JSON.parse(fs.readFileSync(process.argv[2]))
+
+console.log(config)
 
 module.filename = path.join(process.cwd(), '<kernel>')
 module.paths = require('module')._nodeModulePaths(process.cwd())
@@ -27,7 +29,9 @@ var sandbox = {
     module: module,
     require: require,
     console: {
-        log: function(str){ pyout('text/plain', str) },
+        log: function(str){
+            pyout('text/plain', _.toArray(arguments).map(util.inspect.bind(util)).join(' ')) 
+        },
         error: function(str){
             send(pubsock, null, 'pyerr', {
                 data: {
@@ -42,7 +46,9 @@ var sandbox = {
         },
         html: function(str){
             pyout('text/html', str)
-        }
+        },
+        time: console.time.bind(console),
+        timeEnd: console.timeEnd.bind(console)
     }
 }
 var context = vm.createContext(sandbox)
@@ -103,8 +109,8 @@ shellconn.on('message', function(){
         var result, reply;
         try{
             var code = to5.transform(content.code, {
-                blacklist: ['regenerator'],
-                whitelist: ['asyncToGenerator', 'es6.blockScoping']
+                blacklist: ['regenerator', 'useStrict'],
+                optional: ['asyncToGenerator']
             }).code;
             // pyout('text/plain', code)
             result = vm.runInContext(code, context, '<kernel>')
