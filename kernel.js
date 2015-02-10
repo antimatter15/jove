@@ -182,7 +182,7 @@ process.on('SIGINT', function() {
 //     }
 // })(process.stdout.write);
 
-console.log('starting kernel')
+console.log('This io has super cow powers.')
 
 // send(pubsock, null, 'status', { execution_state: 'starting'})
 
