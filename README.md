@@ -1,5 +1,7 @@
-# iove
+# jove
+
+Jupyter fell in love with Io. Turned into cow. The End.
 
 ipython notebook for node.js
 
-This is totally a pun on Jupyter and IO.js
+
